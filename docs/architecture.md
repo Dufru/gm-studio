@@ -15,9 +15,11 @@ The application will be divided into independent components to make development,
 - Vite will support the frontend development workflow.
 
 ### Local Data
-- SQLite will store structured information such as campaigns, notes, and settings.
+- SQLite stores structured information such as campaigns, notes, and settings.
 - Files such as images, PDFs, and audio will be stored locally.
 - Autosave and backup mechanisms will protect user data.
+
+The desktop app currently uses Electron's built-in `node:sqlite` module for campaign metadata. The database lives in Electron's per-user `userData` directory and is accessed only by the main process. The preload exposes narrow, validated campaign operations to the renderer. Campaign notes, media, backups, and migrations remain future work.
 
 ### Discord and Audio Service
 - Python will handle the Discord bot and selected background tasks.
@@ -46,4 +48,4 @@ Platform-specific behavior must be tested, and installation packages should be p
 
 ## 6. Architecture Decisions
 
-The proposed technology stack is provisional. Major decisions will be validated through small prototypes before complex features are implemented.
+The desktop interface uses an in-memory tab and navigation history for the current run. Campaign metadata is stored in SQLite without an added database package. These choices establish the initial desktop workflow; larger data models and backup behavior will be validated before they are introduced.

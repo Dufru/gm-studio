@@ -53,3 +53,8 @@ backups/
 
 # Python environment files
 .python-version
+
+# Electron and Vite generated files
+.vite/
+out/
+.smoke-profile/
