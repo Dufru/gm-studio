@@ -46,4 +46,4 @@ Contributions, suggestions, bug reports, and discussions will be welcome as the 
 
 ## License
 
-The project's license will be defined before the first public release.
+GM Studio is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
