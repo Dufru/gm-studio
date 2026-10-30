@@ -1,5 +1,6 @@
 export interface GMStudioDesktopApi {
   openProjectRepository: () => Promise<void>;
+  mainWindowReady: () => void;
 }
 
 declare global {

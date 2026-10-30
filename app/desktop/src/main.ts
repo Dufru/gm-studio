@@ -9,20 +9,33 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import started from 'electron-squirrel-startup';
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
 
-const createWindow = () => {
-  // Create the browser window.
-  const mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 760,
-    minHeight: 540,
-    title: 'GM Studio',
-    backgroundColor: '#242424',
+let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
+let splashHasPresented = false;
+let splashMinimumTimeElapsed = false;
+let mainRendererIsReady = false;
+const splashMinimumDurationMs = 5000;
+
+function createSplashWindow() {
+  splashHasPresented = false;
+  splashMinimumTimeElapsed = false;
+  const window = new BrowserWindow({
+    width: 750,
+    height: 500,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    show: false,
+    hasShadow: true,
+    center: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -31,9 +44,55 @@ const createWindow = () => {
     },
   });
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  splashWindow = window;
+  window.on('closed', () => {
+    if (splashWindow === window) {
+      splashWindow = null;
+      revealMainWindow();
+    }
+  });
+
+  void loadWindow(window, true);
+
+  window.once('ready-to-show', () => {
+    if (window.isDestroyed() || splashWindow !== window) return;
+    window.show();
+    splashHasPresented = true;
+    setTimeout(() => {
+      splashMinimumTimeElapsed = true;
+      revealMainWindow();
+    }, splashMinimumDurationMs);
+  });
+}
+
+function createMainWindow() {
+  mainRendererIsReady = false;
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 760,
+    minHeight: 540,
+    title: 'GM Studio',
+    backgroundColor: '#242424',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  mainWindow = window;
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null;
+  });
+
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  window.webContents.on('will-navigate', (event, url) => {
     const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
+
     const isAppNavigation = devServerUrl
       ? new URL(url).origin === new URL(devServerUrl).origin
       : url ===
@@ -43,18 +102,65 @@ const createWindow = () => {
             `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`,
           ),
         ).href;
-    if (!isAppNavigation) event.preventDefault();
+
+    if (!isAppNavigation) {
+      event.preventDefault();
+    }
   });
 
-  // and load the index.html of the app.
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+  void loadWindow(window, false);
+}
+
+async function loadWindow(window: BrowserWindow, isSplash: boolean) {
+  try {
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      const url = new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+      if (isSplash) url.searchParams.set('screen', 'splash');
+      await window.loadURL(url.href);
+    } else {
+      await window.loadFile(
+        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+        isSplash ? { query: { screen: 'splash' } } : undefined,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `Failed to load ${isSplash ? 'splash' : 'main'} window:`,
+      error,
     );
+
+    if (isSplash) {
+      if (!window.isDestroyed()) window.close();
+      if (splashWindow === window) splashWindow = null;
+      revealMainWindow();
+      return;
+    }
+
+    if (!window.isDestroyed()) window.close();
+    if (mainWindow === window) mainWindow = null;
+    if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+    app.quit();
   }
-};
+}
+
+function showMainWindow(sender: Electron.WebContents) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (BrowserWindow.fromWebContents(sender) !== mainWindow) return;
+
+  mainRendererIsReady = true;
+  revealMainWindow();
+}
+
+function revealMainWindow() {
+  if (!mainRendererIsReady || !mainWindow || mainWindow.isDestroyed()) return;
+  if (splashHasPresented && !splashMinimumTimeElapsed) return;
+  if (splashWindow && !splashWindow.isDestroyed() && !splashHasPresented)
+    return;
+
+  mainWindow.show();
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  splashWindow = null;
+}
 
 function registerIpcHandlers() {
   ipcMain.handle('app:open-project-repository', async (event) => {
@@ -65,35 +171,29 @@ function registerIpcHandlers() {
 
 function assertTrustedSender(event: IpcMainInvokeEvent) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
+
   if (!senderWindow || event.senderFrame !== event.sender.mainFrame) {
     throw new Error('Origem da solicitação não permitida.');
   }
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   registerIpcHandlers();
-  createWindow();
+  ipcMain.on('app:main-window-ready', (event) => showMainWindow(event.sender));
 
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
+  createSplashWindow();
+  createMainWindow();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      createSplashWindow();
+      createMainWindow();
     }
   });
 });
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
